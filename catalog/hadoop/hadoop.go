@@ -112,19 +112,25 @@ func NewCatalog(name, warehouse string, props iceberg.Properties) (*Catalog, err
 		return nil, errors.New("hadoop catalog requires a warehouse path")
 	}
 
-	u, err := url.Parse(warehouse)
-	if err != nil {
-		return nil, fmt.Errorf("hadoop catalog: invalid warehouse path: %w", err)
-	}
+	// A Windows path (C:\warehouse) has a volume name and is taken as a local
+	// path; url.Parse would treat the drive letter as a scheme.
+	if filepath.VolumeName(warehouse) == "" {
+		u, err := url.Parse(warehouse)
+		if err != nil {
+			return nil, fmt.Errorf("hadoop catalog: invalid warehouse path: %w", err)
+		}
 
-	if u.Scheme != "" && u.Scheme != "file" {
-		return nil, fmt.Errorf("hadoop catalog: unsupported warehouse scheme %q, must be file:// or a local path", u.Scheme)
-	}
-
-	if u.Opaque != "" {
-		warehouse = u.Opaque
-	} else {
-		warehouse = u.Path
+		switch u.Scheme {
+		case "":
+		case "file":
+			if u.Opaque != "" {
+				warehouse = u.Opaque
+			} else {
+				warehouse = u.Path
+			}
+		default:
+			return nil, fmt.Errorf("hadoop catalog: unsupported warehouse scheme %q, must be file:// or a local path", u.Scheme)
+		}
 	}
 
 	if warehouse == "" || warehouse == "/" {
@@ -154,6 +160,19 @@ func NewCatalog(name, warehouse string, props iceberg.Properties) (*Catalog, err
 
 func (c *Catalog) CatalogType() catalog.Type {
 	return catalog.Hadoop
+}
+
+// localPathToFileURI converts an absolute local filesystem path into a file://
+// URI. It normalizes OS-specific separators so Windows drive-letter paths
+// (e.g. C:\foo) produce a valid URI (file:///C:/foo) rather than misencoding
+// the backslashes and drive letter.
+func localPathToFileURI(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
 func (c *Catalog) namespaceToPath(ns table.Identifier) string {
@@ -773,7 +792,7 @@ func (c *Catalog) LoadNamespaceProperties(_ context.Context, ns table.Identifier
 		return nil, fmt.Errorf("hadoop catalog: failed to stat namespace: %w", err)
 	}
 
-	loc := (&url.URL{Scheme: "file", Path: path}).String()
+	loc := localPathToFileURI(path)
 
 	return iceberg.Properties{"location": loc}, nil
 }

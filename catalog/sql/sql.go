@@ -216,6 +216,9 @@ func NewCatalog(name string, db *sql.DB, dialect SupportedDialect, props iceberg
 
 func (c *Catalog) Name() string { return c.name }
 
+// Close releases the underlying database connection pool.
+func (c *Catalog) Close() error { return c.db.Close() }
+
 func (c *Catalog) CatalogType() catalog.Type {
 	return catalog.SQL
 }

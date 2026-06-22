@@ -3131,7 +3131,7 @@ func (t *TableTestSuite) TestRefresh() {
 		"type":         "sql",
 		sql.DriverKey:  sqliteshim.ShimName,
 		sql.DialectKey: string(sql.SQLite),
-		"warehouse":    "file://" + t.T().TempDir(),
+		"warehouse":    "file://" + filepath.ToSlash(t.T().TempDir()),
 	})
 	t.Require().NoError(err)
 
@@ -3176,7 +3176,7 @@ func (t *TableTestSuite) TestMetadataCompressionRoundTrip() {
 		"type":         "sql",
 		sql.DriverKey:  sqliteshim.ShimName,
 		sql.DialectKey: string(sql.SQLite),
-		"warehouse":    "file://" + t.T().TempDir(),
+		"warehouse":    "file://" + filepath.ToSlash(t.T().TempDir()),
 	})
 	t.Require().NoError(err)
 
@@ -3239,7 +3239,7 @@ func (t *TableTestSuite) TestMetadataCompressionRoundTripZstd() {
 		"type":         "sql",
 		sql.DriverKey:  sqliteshim.ShimName,
 		sql.DialectKey: string(sql.SQLite),
-		"warehouse":    "file://" + t.T().TempDir(),
+		"warehouse":    "file://" + filepath.ToSlash(t.T().TempDir()),
 	})
 	t.Require().NoError(err)
 

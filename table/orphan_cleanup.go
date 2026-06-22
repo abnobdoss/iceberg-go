@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	stdpath "path"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -300,7 +301,7 @@ func (t Table) getReferencedFiles(ctx context.Context, fs iceio.IO, maxConcurren
 
 	// Add version hint file (for Hadoop-style tables)
 	// Following Java's ReachableFileUtil.versionHintLocation() logic:
-	versionHintPath := filepath.Join(metadata.Location(), "metadata", "version-hint.text")
+	versionHintPath := joinLocation(metadata.Location(), "metadata/version-hint.text")
 	referenced[normalizeFilePath(versionHintPath)] = false
 
 	for sf := range metadata.Statistics() {
@@ -629,17 +630,22 @@ func normalizeFilePathWithConfig(path string, cfg *orphanCleanupConfig) string {
 	if strings.HasPrefix(path, "file:") {
 		if u, err := url.Parse(path); err == nil {
 			host := strings.ToLower(u.Host)
-			if host == "" || host == "localhost" {
+			switch {
+			case host == "" || host == "localhost":
 				pathStr := u.Path
 				// Intercept Windows drive letters (e.g., /C:/) and strip the leading slash
 				if len(pathStr) >= 3 && pathStr[0] == '/' && pathStr[2] == ':' {
 					pathStr = pathStr[1:]
 				}
 
-				return filepath.Clean(pathStr)
+				return normalizeNonURLPath(pathStr)
+			case len(host) == 2 && host[1] == ':' && host[0] >= 'a' && host[0] <= 'z':
+				// A Windows drive letter expressed as the authority (file://C:/dir).
+				return normalizeNonURLPath(u.Host + u.Path)
+			default:
+				// Remote authority – keep it as //host/path
+				return normalizeNonURLPath("//" + u.Host + u.Path)
 			}
-			// Remote authority – keep it as //host/path
-			return filepath.Clean("//" + u.Host + u.Path)
 		}
 	}
 
@@ -684,7 +690,10 @@ func normalizeURLPath(path string, cfg *orphanCleanupConfig) string {
 	normalizedURL := &url.URL{
 		Scheme: normalizedScheme,
 		Host:   normalizedAuthority,
-		Path:   filepath.Clean(parsedURL.Path),
+		// URL path components are always slash-separated; use path.Clean (not
+		// filepath.Clean) so Windows does not rewrite them with backslashes,
+		// which url.String() would then percent-encode (e.g. %5C).
+		Path: stdpath.Clean(parsedURL.Path),
 	}
 
 	return normalizedURL.String()
