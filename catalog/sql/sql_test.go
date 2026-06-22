@@ -152,6 +152,7 @@ type SqliteCatalogTestSuite struct {
 	suite.Suite
 
 	warehouse string
+	closers   []func() error
 }
 
 func (s *SqliteCatalogTestSuite) randomTableIdentifier() table.Identifier {
@@ -175,7 +176,18 @@ func (s *SqliteCatalogTestSuite) SetupTest() {
 }
 
 func (s *SqliteCatalogTestSuite) catalogUri() string {
-	return "file://" + filepath.Join(s.warehouse, "sql-catalog.db")
+	p := filepath.ToSlash(filepath.Join(s.warehouse, "sql-catalog.db"))
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+
+	return "file://" + p
+}
+
+// warehouseURI returns the warehouse as a file:// location with forward slashes
+// so it is valid on Windows (C:\dir -> file://C:/dir).
+func (s *SqliteCatalogTestSuite) warehouseURI() string {
+	return "file://" + filepath.ToSlash(s.warehouse)
 }
 
 func (s *SqliteCatalogTestSuite) confirmNoTables(db *sql.DB) {
@@ -220,16 +232,26 @@ func (s *SqliteCatalogTestSuite) loadCatalogForTableCreation() *sqlcat.Catalog {
 	})
 	s.Require().NoError(err)
 
-	return cat.(*sqlcat.Catalog)
+	c := cat.(*sqlcat.Catalog)
+	s.closers = append(s.closers, c.Close)
+
+	return c
 }
 
 func (s *SqliteCatalogTestSuite) TearDownTest() {
+	// Close DB connections before removing the warehouse: Windows cannot delete
+	// a file that still has an open handle (unlike Unix).
+	for _, closeFn := range s.closers {
+		_ = closeFn()
+	}
+	s.closers = nil
 	s.Require().NoError(os.RemoveAll(s.warehouse))
 }
 
 func (s *SqliteCatalogTestSuite) getDB() *sql.DB {
 	sqldb, err := sql.Open(sqliteshim.ShimName, s.catalogUri())
 	s.Require().NoError(err)
+	s.closers = append(s.closers, sqldb.Close)
 
 	return sqldb
 }
@@ -240,11 +262,14 @@ func (s *SqliteCatalogTestSuite) getCatalogMemory() *sqlcat.Catalog {
 		sqlcat.DriverKey:  sqliteshim.ShimName,
 		sqlcat.DialectKey: string(sqlcat.SQLite),
 		"type":            "sql",
-		"warehouse":       "file://" + s.warehouse,
+		"warehouse":       s.warehouseURI(),
 	})
 	s.Require().NoError(err)
 
-	return cat.(*sqlcat.Catalog)
+	c := cat.(*sqlcat.Catalog)
+	s.closers = append(s.closers, c.Close)
+
+	return c
 }
 
 func (s *SqliteCatalogTestSuite) getCatalogSqlite() *sqlcat.Catalog {
@@ -253,11 +278,14 @@ func (s *SqliteCatalogTestSuite) getCatalogSqlite() *sqlcat.Catalog {
 		sqlcat.DriverKey:  sqliteshim.ShimName,
 		sqlcat.DialectKey: string(sqlcat.SQLite),
 		"type":            "sql",
-		"warehouse":       "file://" + s.warehouse,
+		"warehouse":       s.warehouseURI(),
 	})
 	s.Require().NoError(err)
 
-	return cat.(*sqlcat.Catalog)
+	c := cat.(*sqlcat.Catalog)
+	s.closers = append(s.closers, c.Close)
+
+	return c
 }
 
 func (s *SqliteCatalogTestSuite) TestSqlCatalogType() {
@@ -331,7 +359,7 @@ func (s *SqliteCatalogTestSuite) TestCatalogNameMatchesLoaderArg() {
 		sqlcat.DriverKey:  sqliteshim.ShimName,
 		sqlcat.DialectKey: string(sqlcat.SQLite),
 		"type":            "sql",
-		"warehouse":       "file://" + s.warehouse,
+		"warehouse":       s.warehouseURI(),
 	}
 
 	const catalogName = "test_catalog"
@@ -339,6 +367,7 @@ func (s *SqliteCatalogTestSuite) TestCatalogNameMatchesLoaderArg() {
 	s.Require().NoError(err)
 	sqlCat, ok := cat.(*sqlcat.Catalog)
 	s.Require().True(ok, "expected *sqlcat.Catalog")
+	s.closers = append(s.closers, sqlCat.Close)
 	s.Equal(catalogName, sqlCat.Name(), "SQL catalog must surface the name passed to catalog.Load")
 
 	ns := table.Identifier{"test"}
@@ -353,6 +382,7 @@ func (s *SqliteCatalogTestSuite) TestCatalogNameMatchesLoaderArg() {
 	s.Require().NoError(err)
 	otherSQLCat, ok := otherCat.(*sqlcat.Catalog)
 	s.Require().True(ok, "expected *sqlcat.Catalog")
+	s.closers = append(s.closers, otherSQLCat.Close)
 	s.Equal("sql", otherSQLCat.Name())
 
 	otherNS, err := otherSQLCat.ListNamespaces(ctx, table.Identifier{})
@@ -519,7 +549,7 @@ func (s *SqliteCatalogTestSuite) TestCreateTableWithGivenLocation() {
 		s.Require().NoError(err)
 
 		s.Equal(tt.tblID, tbl.Identifier())
-		s.True(strings.HasPrefix(tbl.MetadataLocation(), "file://"+s.warehouse))
+		s.True(strings.HasPrefix(tbl.MetadataLocation(), s.warehouseURI()))
 		s.FileExists(strings.TrimPrefix(tbl.MetadataLocation(), "file://"))
 		s.Equal(location, tbl.Location())
 		s.NoError(tt.cat.DropTable(context.Background(), tt.tblID))
@@ -784,7 +814,7 @@ func (s *SqliteCatalogTestSuite) TestPurgeTable() {
 		metaMap["statistics"] = []any{
 			map[string]any{
 				"snapshot-id":               tbl.Metadata().CurrentSnapshot().SnapshotID,
-				"statistics-path":           "file://" + externalStatsPath,
+				"statistics-path":           "file://" + filepath.ToSlash(externalStatsPath),
 				"file-size-in-bytes":        17,
 				"file-footer-size-in-bytes": 10,
 				"blob-metadata":             []any{},

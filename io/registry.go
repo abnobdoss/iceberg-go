@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"sync"
 )
@@ -85,22 +86,32 @@ func schemeRegistrationHint(scheme string) string {
 }
 
 func inferFileIOFromScheme(ctx context.Context, path string, props map[string]string) (IO, error) {
-	parsed, err := url.Parse(path)
-	if err != nil {
-		return nil, err
+	var parsed *url.URL
+	scheme := ""
+
+	// A Windows path (C:\dir) has a volume name and is the local filesystem;
+	// url.Parse would misread the drive letter as a scheme and reject paths
+	// containing '%', so skip parsing for volume paths.
+	if filepath.VolumeName(path) == "" {
+		var err error
+		parsed, err = url.Parse(path)
+		if err != nil {
+			return nil, err
+		}
+		scheme = parsed.Scheme
 	}
 
 	regMutex.RLock()
-	factory, ok := defaultRegistry[parsed.Scheme]
+	factory, ok := defaultRegistry[scheme]
 	regMutex.RUnlock()
 
 	if !ok {
-		hint := schemeRegistrationHint(parsed.Scheme)
+		hint := schemeRegistrationHint(scheme)
 		if hint != "" {
-			return nil, fmt.Errorf("%w for path %q (scheme: %s)\n%s", ErrIOSchemeNotFound, path, parsed.Scheme, hint)
+			return nil, fmt.Errorf("%w for path %q (scheme: %s)\n%s", ErrIOSchemeNotFound, path, scheme, hint)
 		}
 
-		return nil, fmt.Errorf("%w for path %q (scheme: %s)", ErrIOSchemeNotFound, path, parsed.Scheme)
+		return nil, fmt.Errorf("%w for path %q (scheme: %s)", ErrIOSchemeNotFound, path, scheme)
 	}
 
 	return factory(ctx, parsed, props)

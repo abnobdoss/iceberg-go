@@ -76,19 +76,27 @@ func (s *HadoopCatalogTestSuite) TestRegistrationMissingWarehouse() {
 }
 
 func (s *HadoopCatalogTestSuite) TestNewCatalogTrimsTrailingSlash() {
+	// The warehouse is normalized to an absolute path, which is platform
+	// dependent (e.g. C:\tmp\wh on Windows), so compare against the same form.
+	want, err := filepath.Abs("/tmp/wh")
+	s.Require().NoError(err)
+
 	cat, err := NewCatalog("test", "/tmp/wh/", nil)
 	s.Require().NoError(err)
-	s.Equal("/tmp/wh", cat.warehouse)
+	s.Equal(want, cat.warehouse)
 }
 
 func (s *HadoopCatalogTestSuite) TestNewCatalogStripsFilePrefix() {
+	want, err := filepath.Abs("/tmp/wh")
+	s.Require().NoError(err)
+
 	cat, err := NewCatalog("test", "file:///tmp/wh", nil)
 	s.Require().NoError(err)
-	s.Equal("/tmp/wh", cat.warehouse)
+	s.Equal(want, cat.warehouse)
 
 	cat, err = NewCatalog("test", "file:/tmp/wh", nil)
 	s.Require().NoError(err)
-	s.Equal("/tmp/wh", cat.warehouse)
+	s.Equal(want, cat.warehouse)
 }
 
 func (s *HadoopCatalogTestSuite) TestNewCatalogRejectsNonFileScheme() {
@@ -557,7 +565,7 @@ func (s *HadoopCatalogTestSuite) TestLoadNamespaceProperties() {
 
 	props, err := s.cat.LoadNamespaceProperties(context.Background(), []string{"ns"})
 	s.Require().NoError(err)
-	s.Equal(iceberg.Properties{"location": "file://" + nsDir}, props)
+	s.Equal(iceberg.Properties{"location": localPathToFileURI(nsDir)}, props)
 }
 
 func (s *HadoopCatalogTestSuite) TestLoadNamespacePropertiesNotExists() {
@@ -621,7 +629,7 @@ func (s *HadoopCatalogTestSuite) TestLoadNamespacePropertiesNested() {
 
 	props, err := s.cat.LoadNamespaceProperties(context.Background(), []string{"a", "b", "c"})
 	s.Require().NoError(err)
-	s.Equal("file://"+nsDir, props["location"])
+	s.Equal(localPathToFileURI(nsDir), props["location"])
 }
 
 func (s *HadoopCatalogTestSuite) TestListNamespacesMixedContent() {
